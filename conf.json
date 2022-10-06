@@ -1,0 +1,25 @@
+{
+    "Params": {
+        "Percent": 85,
+        "DateFormat_date": "01-02-2006",
+        "DateFormat_time": "15:04:05",
+        "ThomeOutputFormat": "На томе {{.Thome}}: 77% занято ",
+        "ThomeOutputFormat_success": "✅ в порядке",
+        "ThomeOutputFormat_error": "⚠️  ВНИМАНИЕ"
+    },
+    "Volumes": [
+        {
+            "VolumeGOOSLetter": "D",
+            "VolumeUNIXPath": "/Volumes/StorNextVideo",
+            "VolumeFolders": [
+                "Projects",
+                "Dev/android",
+                "Dev/node",
+                "Dev/python3"
+            ]
+        }
+    ],
+    "MailList": [
+        "1"
+    ]
+}

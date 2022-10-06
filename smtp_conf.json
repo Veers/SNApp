@@ -1,0 +1,17 @@
+{
+    "server": "mail.red-red.ru",
+    "port": 587,
+    "from": "Отчёты ДПП <pp-report@red-red.ru>",
+    "login": "pp-report",
+    "password": "somepassword",
+    "to": [
+        "pbm@red-red.ru",
+        "dnv@red-red.ru",
+        "vev@red-red.ru",
+        "vvv@red-red.ru",
+        "bad@red-red.ru",
+        "mom@red-red.ru",
+        "rva@red-red.ru"
+    ],
+    "reply": "Post Help <post-help@red-red.ru>"
+}
