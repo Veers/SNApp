@@ -8,11 +8,60 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"syscall"
 	"text/template"
 	"time"
-
-	"github.com/ricochet2200/go-disk-usage/du"
+	"unsafe"
 )
+
+type DiskUsage struct {
+	freeBytes  int64
+	totalBytes int64
+	availBytes int64
+}
+
+// NewDiskUsages returns an object holding the disk usage of volumePath
+// or nil in case of error (invalid path, etc)
+func NewDiskUsage(volumePath string) *DiskUsage {
+
+	h := syscall.MustLoadDLL("kernel32.dll")
+	c := h.MustFindProc("GetDiskFreeSpaceExW")
+
+	du := &DiskUsage{}
+
+	c.Call(
+		uintptr(unsafe.Pointer(syscall.StringToUTF16Ptr(volumePath))),
+		uintptr(unsafe.Pointer(&du.freeBytes)),
+		uintptr(unsafe.Pointer(&du.totalBytes)),
+		uintptr(unsafe.Pointer(&du.availBytes)))
+
+	return du
+}
+
+// Free returns total free bytes on file system
+func (du *DiskUsage) Free() uint64 {
+	return uint64(du.freeBytes)
+}
+
+// Available returns total available bytes on file system to an unprivileged user
+func (du *DiskUsage) Available() uint64 {
+	return uint64(du.availBytes)
+}
+
+// Size returns total size of the file system
+func (du *DiskUsage) Size() uint64 {
+	return uint64(du.totalBytes)
+}
+
+// Used returns total bytes used in file system
+func (du *DiskUsage) Used() uint64 {
+	return du.Size() - du.Free()
+}
+
+// Usage returns percentage of use on the file system
+func (du *DiskUsage) Usage() float32 {
+	return float32(du.Used()) / float32(du.Size())
+}
 
 var KB = uint64(1024)
 
@@ -81,6 +130,20 @@ func ByteCountIEC(b int64) string {
 		float64(b)/float64(div), "KMGTPE"[exp])
 }
 
+func DirSize(path string) (int64, error) {
+	var size int64
+	err := filepath.Walk(path, func(_ string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		if !info.IsDir() {
+			size += info.Size()
+		}
+		return err
+	})
+	return size, err
+}
+
 func getThomeValues(path string, params Params) string {
 	thomeVars := make(map[string]interface{})
 
@@ -91,7 +154,7 @@ func getThomeValues(path string, params Params) string {
 	tmpl, _ := template.ParseFiles("templates/thomeinfo.tmpl")
 	var tpl bytes.Buffer
 
-	usage := du.NewDiskUsage(path)
+	usage := NewDiskUsage(path)
 	thomePercent := usage.Usage() * 100
 	// fmt.Sprintf("%F %%", usage.Usage()*100)
 	// thomePercent := 23.05643
@@ -110,20 +173,6 @@ func getThomeValues(path string, params Params) string {
 	thomeVars["ThomePercent"] = fmt.Sprintf("%.2f %%", thomePercent)
 	tmpl.Execute(&tpl, thomeVars)
 	return tpl.String()
-}
-
-func DirSize(path string) (int64, error) {
-	var size int64
-	err := filepath.Walk(path, func(_ string, info os.FileInfo, err error) error {
-		if err != nil {
-			return err
-		}
-		if !info.IsDir() {
-			size += info.Size()
-		}
-		return err
-	})
-	return size, err
 }
 
 func getDirectoryInfo(path string) string {
@@ -213,7 +262,7 @@ func main() {
 	// read config start
 
 	// check disk (dir) size starts
-	usage := du.NewDiskUsage("/")
+	usage := NewDiskUsage("/")
 	fmt.Println("Free:", usage.Free()/(KB*KB*KB))
 	fmt.Println("Available:", usage.Available()/(KB*KB*KB))
 	fmt.Println("Size:", usage.Size()/(KB*KB*KB))
