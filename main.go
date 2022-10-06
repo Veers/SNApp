@@ -53,6 +53,34 @@ func check(e error) {
 	}
 }
 
+func ByteCountSI(b int64) string {
+	const unit = 1000
+	if b < unit {
+		return fmt.Sprintf("%d B", b)
+	}
+	div, exp := int64(unit), 0
+	for n := b / unit; n >= unit; n /= unit {
+		div *= unit
+		exp++
+	}
+	return fmt.Sprintf("%.1f %cB",
+		float64(b)/float64(div), "kMGTPE"[exp])
+}
+
+func ByteCountIEC(b int64) string {
+	const unit = 1024
+	if b < unit {
+		return fmt.Sprintf("%d B", b)
+	}
+	div, exp := int64(unit), 0
+	for n := b / unit; n >= unit; n /= unit {
+		div *= unit
+		exp++
+	}
+	return fmt.Sprintf("%.1f %ciB",
+		float64(b)/float64(div), "KMGTPE"[exp])
+}
+
 func getThomeValues(path string, params Params) string {
 	thomeVars := make(map[string]interface{})
 
@@ -81,6 +109,63 @@ func getThomeValues(path string, params Params) string {
 
 	thomeVars["ThomePercent"] = fmt.Sprintf("%.2f %%", thomePercent)
 	tmpl.Execute(&tpl, thomeVars)
+	return tpl.String()
+}
+
+func DirSize(path string) (int64, error) {
+	var size int64
+	err := filepath.Walk(path, func(_ string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		if !info.IsDir() {
+			size += info.Size()
+		}
+		return err
+	})
+	return size, err
+}
+
+func getDirectoryInfo(path string) string {
+	dirThomeVars := make(map[string]interface{})
+
+	fmt.Println(path)
+	f, err := os.Open(path)
+	if err != nil {
+		fmt.Println(err)
+	}
+	files, err := f.Readdir(0)
+	if err != nil {
+		fmt.Println(err)
+	}
+
+	var size int64
+	dirInfo := make([]string, 1)
+	for _, v := range files {
+		if v.IsDir() {
+			var resDirStr string
+			res, err := DirSize(filepath.FromSlash(path + "\\" + v.Name()))
+			if err != nil {
+				fmt.Println(err)
+			}
+			// fmt.Println(res)
+			size = res
+			fmt.Println(v.Name(), v.IsDir(), size)
+			// fmt.Println(v.Name(), v.IsDir(), size)
+			resDirStr = v.Name()
+			dirInfo = append(dirInfo, resDirStr+" : "+ByteCountSI(size))
+		}
+	}
+
+	dirInfoResText := strings.Join(dirInfo, "\r\n")
+	dirThomeVars["ThomeDirInfo"] = dirInfoResText
+	dirThomeVars["ThomeDirTitle"] = path
+
+	// parse the template
+	tmpl, _ := template.ParseFiles("templates/concretethomeinfo.tmpl")
+	var tpl bytes.Buffer
+	tmpl.Execute(&tpl, dirThomeVars)
+
 	return tpl.String()
 }
 
@@ -141,19 +226,27 @@ func main() {
 	// set := make(map[string]bool)
 
 	thomeInfo := make([]string, len(configuration.Volumes))
+	dirInfo := make([]string, 1)
 	var thome string
+	var thomePath string
 	for _, s := range configuration.Volumes {
 		if runtime.GOOS == "windows" {
-			// fmt.Println("Hello from Windows")
 			thome = filepath.FromSlash(s.VolumeGOOSLetter + ":")
+			thomePath = filepath.FromSlash(s.VolumeGOOSLetter + ":/")
 		} else {
-			thome = filepath.FromSlash(s.VolumeUNIXPath)
+			panic("ONLY WINDOWS IMPLEMENTATION")
+			// thome = filepath.FromSlash(s.VolumeUNIXPath)
 		}
 		thomeInfo = append(thomeInfo, strings.TrimSpace(getThomeValues(thome, configuration.Params)))
+
+		for _, f := range s.VolumeFolders {
+			dirInfo = append(dirInfo, getDirectoryInfo(filepath.FromSlash(thomePath+f)))
+		}
 	}
 	// sendEmails()
 
 	thomeResText := strings.Join(thomeInfo, "\r\n")
+	dirInfoResText := strings.Join(dirInfo, "\r\n")
 
 	time.Sleep(2 * time.Second)
 
@@ -165,7 +258,7 @@ func main() {
 	vars["DateEnd"] = endDate.Format(configuration.Params.DateFormat_date)
 	vars["TimeEnd"] = endDate.Format(configuration.Params.DateFormat_time)
 	vars["ThomeInfo"] = strings.TrimSpace(thomeResText)
-	vars["ProjectInfos"] = "TEST"
+	vars["ProjectInfos"] = dirInfoResText
 	// parse the template
 	tmpl, _ := template.ParseFiles("templates/template.tmpl")
 	// create a new file
