@@ -4,10 +4,14 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"log"
+	"net/smtp"
 	"os"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"text/template"
 	"time"
@@ -88,12 +92,11 @@ type Configuration struct {
 }
 
 type Params struct {
-	Percent                   int
-	DateFormat_date           string
-	DateFormat_time           string
-	ThomeOutputFormat         string
-	ThomeOutputFormat_success string
-	ThomeOutputFormat_error   string
+	Percent                     int
+	DateFormat_date             string
+	DateFormat_time             string
+	VolumeOutputMessage_success string
+	VolumeOutputMessage_error   string
 }
 
 func check(e error) {
@@ -145,47 +148,44 @@ func DirSize(path string) (int64, error) {
 }
 
 func getThomeValues(path string, params Params) string {
-	thomeVars := make(map[string]interface{})
+	volumeTemplateVars := make(map[string]interface{})
 
-	thomeVars["ThomePercent"] = "percent"
-	thomeVars["ThomeStatus"] = "status"
+	volumeTemplateVars["Message"] = "."
 
 	// parse the template
-	tmpl, _ := template.ParseFiles("templates/thomeinfo.tmpl")
+	tmpl, tmplErr := template.ParseFiles("templates/volumeinfo.tmpl")
+	if tmplErr != nil {
+		log.Println(tmplErr)
+	}
 	var tpl bytes.Buffer
 
 	usage := NewDiskUsage(path)
 	thomePercent := usage.Usage() * 100
-	// fmt.Sprintf("%F %%", usage.Usage()*100)
-	// thomePercent := 23.05643
 	if int(thomePercent) >= params.Percent {
-		thomeVars["ThomeStatus"] = params.ThomeOutputFormat_error
+		volumeTemplateVars["Message"] = params.VolumeOutputMessage_error
 	} else {
-		thomeVars["ThomeStatus"] = params.ThomeOutputFormat_success
+		volumeTemplateVars["Message"] = params.VolumeOutputMessage_success
 	}
 
 	if runtime.GOOS == "windows" {
-		thomeVars["ThomeName"] = path
+		volumeTemplateVars["VolumeName"] = path
 	} else {
-		thomeVars["ThomeName"] = filepath.FromSlash(strings.Split(path, "/")[2])
+		volumeTemplateVars["VolumeName"] = filepath.FromSlash(strings.Split(path, "/")[2])
 	}
 
-	thomeVars["ThomePercent"] = fmt.Sprintf("%.2f %%", thomePercent)
-	tmpl.Execute(&tpl, thomeVars)
+	volumeTemplateVars["CapacityPercent"] = fmt.Sprintf("%.2f %%", thomePercent)
+	tmpl.Execute(&tpl, volumeTemplateVars)
 	return tpl.String()
 }
 
-func getDirectoryInfo(path string) string {
-	dirThomeVars := make(map[string]interface{})
-
-	fmt.Println(path)
+func getDirectoryInfo(path string) []string {
 	f, err := os.Open(path)
 	if err != nil {
-		fmt.Println(err)
+		log.Println(err)
 	}
 	files, err := f.Readdir(0)
 	if err != nil {
-		fmt.Println(err)
+		log.Println(err)
 	}
 
 	var size int64
@@ -195,57 +195,54 @@ func getDirectoryInfo(path string) string {
 			var resDirStr string
 			res, err := DirSize(filepath.FromSlash(path + "\\" + v.Name()))
 			if err != nil {
-				fmt.Println(err)
+				log.Println(err)
 			}
-			// fmt.Println(res)
 			size = res
-			fmt.Println(v.Name(), v.IsDir(), size)
-			// fmt.Println(v.Name(), v.IsDir(), size)
 			resDirStr = v.Name()
 			dirInfo = append(dirInfo, resDirStr+" : "+ByteCountSI(size))
 		}
 	}
-
-	dirInfoResText := strings.Join(dirInfo, "\r\n")
-	dirThomeVars["ThomeDirInfo"] = dirInfoResText
-	dirThomeVars["ThomeDirTitle"] = path
-
-	// parse the template
-	tmpl, _ := template.ParseFiles("templates/concretethomeinfo.tmpl")
-	var tpl bytes.Buffer
-	tmpl.Execute(&tpl, dirThomeVars)
-
-	return tpl.String()
+	return dirInfo
 }
 
-// func sendEmails() {
-// 	smptConfigFile, _ := os.Open("smtp_conf.json")
-// 	defer smptConfigFile.Close()
-// 	smtpDecoder := json.NewDecoder(smptConfigFile)
-// 	smtpConfiguration := SMTPConfiguration()
-// 	err := smtpDecoder.Decode(&smtpConfiguration)
-// 	if err != nil {
-// 		fmt.Println("error:", err)
-// 	}
+func sendEmails() {
+	smtpConfigFile, smtpErr := os.Open("smtp_conf.json")
+	if smtpErr != nil {
+		log.Println(smtpErr)
+	}
 
-// 	msg := "Hello geeks!!!"
-// 	body := []byte(msg)
-// 	auth := smtp.PlainAuth("", smtpConfiguration.from, smtpConfiguration.password, smtpConfiguration.host)
-// 	err_smtp := smtp.SendMail(
-// 		smtpConfiguration.server+":"+smtpConfiguration.port,
-// 		auth,
-// 		smtpConfiguration.from,
-// 		smtpConfiguration.to,
-// 		body)
-// 	if err_smtp != nil {
-// 		fmt.Println(err_smtp)
-// 		os.Exit(1)
-// 	}
+	defer smtpConfigFile.Close()
+	smtpDecoder := json.NewDecoder(smtpConfigFile)
+	smtpConfiguration := SMTPConfiguration{}
+	err := smtpDecoder.Decode(&smtpConfiguration)
+	if err != nil {
+		log.Println("error:", err)
+	}
 
-// 	fmt.Println("Successfully sent mail to all user in toList")
-// }
+	msg := "Hello geeks!!!"
+	body := []byte(msg)
+	auth := smtp.PlainAuth("", smtpConfiguration.login, smtpConfiguration.password, smtpConfiguration.server)
+	err_smtp := smtp.SendMail(
+		smtpConfiguration.server+":"+strconv.Itoa(smtpConfiguration.port),
+		auth,
+		smtpConfiguration.from,
+		smtpConfiguration.to,
+		body)
+	if err_smtp != nil {
+		log.Println(err_smtp)
+		os.Exit(1)
+	}
+
+	log.Println("Successfully sent mail to all user in toList")
+}
 
 func main() {
+	// setup logs
+	logFile, logErr := os.OpenFile("logs.txt", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0666)
+	if logErr != nil {
+		log.Fatal(logErr)
+	}
+	log.SetOutput(logFile)
 
 	startDate := time.Now()
 
@@ -256,46 +253,43 @@ func main() {
 	configuration := Configuration{}
 	err := decoder.Decode(&configuration)
 	if err != nil {
-		fmt.Println("error:", err)
+		log.Println("error:", err)
 	}
-	fmt.Println(configuration.Volumes) // output: [UserA, UserB]
 	// read config start
-
-	// check disk (dir) size starts
-	usage := NewDiskUsage("/")
-	fmt.Println("Free:", usage.Free()/(KB*KB*KB))
-	fmt.Println("Available:", usage.Available()/(KB*KB*KB))
-	fmt.Println("Size:", usage.Size()/(KB*KB*KB))
-	fmt.Println("Used:", usage.Used()/(KB*KB*KB))
-	fmt.Println("Usage:", usage.Usage()*100, "%")
-	// check disk (dir) size starts
 
 	time.Sleep(2 * time.Second)
 
-	// set := make(map[string]bool)
-
-	thomeInfo := make([]string, len(configuration.Volumes))
-	dirInfo := make([]string, 1)
+	volumesInfo := make([]string, 0)
 	var thome string
 	var thomePath string
+	m := make(map[string][]string)
+	// concurrency shit
+	var wg sync.WaitGroup
+	wg.Add(len(configuration.Volumes))
+	// var volumeInfo string
 	for _, s := range configuration.Volumes {
 		if runtime.GOOS == "windows" {
 			thome = filepath.FromSlash(s.VolumeGOOSLetter + ":")
 			thomePath = filepath.FromSlash(s.VolumeGOOSLetter + ":/")
 		} else {
 			panic("ONLY WINDOWS IMPLEMENTATION")
-			// thome = filepath.FromSlash(s.VolumeUNIXPath)
 		}
-		thomeInfo = append(thomeInfo, strings.TrimSpace(getThomeValues(thome, configuration.Params)))
+		go func(thome string, params Params) {
+			volumesInfo = append(volumesInfo, getThomeValues(thome, params))
+			wg.Done()
+		}(thome, configuration.Params)
 
+		var dirWg sync.WaitGroup
+		dirWg.Add(len(s.VolumeFolders))
 		for _, f := range s.VolumeFolders {
-			dirInfo = append(dirInfo, getDirectoryInfo(filepath.FromSlash(thomePath+f)))
+			go func(f string) {
+				m[filepath.FromSlash(thomePath+f)] = getDirectoryInfo(filepath.FromSlash(thomePath + f))
+				dirWg.Done()
+			}(f)
 		}
+		dirWg.Wait()
 	}
-	// sendEmails()
-
-	thomeResText := strings.Join(thomeInfo, "\r\n")
-	dirInfoResText := strings.Join(dirInfo, "\r\n")
+	wg.Wait()
 
 	time.Sleep(2 * time.Second)
 
@@ -306,13 +300,25 @@ func main() {
 	vars["Date"] = startDate.Format(configuration.Params.DateFormat_date)
 	vars["DateEnd"] = endDate.Format(configuration.Params.DateFormat_date)
 	vars["TimeEnd"] = endDate.Format(configuration.Params.DateFormat_time)
-	vars["ThomeInfo"] = strings.TrimSpace(thomeResText)
-	vars["ProjectInfos"] = dirInfoResText
+	vars["Volumes"] = volumesInfo
+	vars["Folders"] = m
+	vars["c"] = endDate.Sub(startDate)
+	keys := make([]string, 0, len(vars))
+	for k := range vars {
+		keys = append(keys, k)
+	}
 	// parse the template
-	tmpl, _ := template.ParseFiles("templates/template.tmpl")
+	tmpl, err := template.ParseFiles("templates/template.tmpl")
+	if err != nil {
+		log.Panic(err)
+		panic(err)
+	}
 	// create a new file
 	file1, _ := os.Create("greeting.txt")
 	defer file1.Close()
 	// apply the template to the vars map and write the result to file.
+	tmpl.ExecuteTemplate(file1, "index", vars)
 	tmpl.Execute(file1, vars)
+
+	// sendEmails()
 }

@@ -3,19 +3,24 @@
         "Percent": 50,
         "DateFormat_date": "01-02-2006",
         "DateFormat_time": "15:04:05",
-        "ThomeOutputFormat": "На томе {{.Thome}}: 77% занято ",
-        "ThomeOutputFormat_success": "✅ в порядке",
-        "ThomeOutputFormat_error": "⚠️  ВНИМАНИЕ"
+        "VolumeOutputMessage_success": "✅ в порядке",
+        "VolumeOutputMessage_error": "⚠️  ВНИМАНИЕ"
     },
     "Volumes": [
         {
-            "VolumeGOOSLetter": "D",
-            "VolumeUNIXPath": "/Volumes/StorNextVideo",
+            "VolumeGOOSLetter": "C",
+            "VolumeUNIXPath": "/Volumes/TestFolder",
             "VolumeFolders": [
-                "Projects/C/CBArchiver/Archiver",
-                "Dev/android",
-                "Dev/node",
-                "Dev/python3"
+                "Games/Heroes3_HotA",
+                "Python27"
+            ]
+        },
+        {
+            "VolumeGOOSLetter": "D",
+            "VolumeUNIXPath": "/Volumes/TestFolder2",
+            "VolumeFolders": [
+                "Dev/python3",
+                "Projects/Java"
             ]
         }
     ],
