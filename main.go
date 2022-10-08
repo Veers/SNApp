@@ -205,7 +205,7 @@ func getDirectoryInfo(path string) []string {
 	return dirInfo
 }
 
-func sendEmails() {
+func sendEmails(msg []byte) {
 	smtpConfigFile, smtpErr := os.Open("smtp_conf.json")
 	if smtpErr != nil {
 		log.Println(smtpErr)
@@ -219,7 +219,6 @@ func sendEmails() {
 		log.Println("error:", err)
 	}
 
-	msg := "Hello geeks!!!"
 	body := []byte(msg)
 	auth := smtp.PlainAuth("", smtpConfiguration.login, smtpConfiguration.password, smtpConfiguration.server)
 	err_smtp := smtp.SendMail(
@@ -315,10 +314,11 @@ func main() {
 	}
 	// create a new file
 	file1, _ := os.Create("greeting.txt")
+	var mailTpl bytes.Buffer
 	defer file1.Close()
 	// apply the template to the vars map and write the result to file.
-	tmpl.ExecuteTemplate(file1, "index", vars)
 	tmpl.Execute(file1, vars)
+	tmpl.Execute(&mailTpl, vars)
 
-	// sendEmails()
+	sendEmails(mailTpl.Bytes())
 }
