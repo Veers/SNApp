@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -97,7 +98,22 @@ type Params struct {
 	DateFormat_time             string
 	VolumeOutputMessage_success string
 	VolumeOutputMessage_error   string
+	ThreadsPerVolumes           int
+	SortFolders                 string
 }
+
+var dirMap map[string]int64
+
+type Pair struct {
+	Key   string
+	Value int64
+}
+
+type PairList []Pair
+
+func (p PairList) Len() int           { return len(p) }
+func (p PairList) Less(i, j int) bool { return p[i].Value < p[j].Value }
+func (p PairList) Swap(i, j int)      { p[i], p[j] = p[j], p[i] }
 
 func check(e error) {
 	if e != nil {
@@ -178,7 +194,19 @@ func getThomeValues(path string, params Params) string {
 	return tpl.String()
 }
 
-func getDirectoryInfo(path string) []string {
+func rankBySize(data map[string]int64) PairList {
+	pl := make(PairList, len(data))
+	i := 0
+	for k, v := range data {
+		pl[i] = Pair{k, v}
+		i++
+	}
+	sort.Sort(pl)
+	return pl
+}
+
+func getDirectoryInfo(path string, sortType string) []string {
+
 	f, err := os.Open(path)
 	if err != nil {
 		log.Println(err)
@@ -189,6 +217,7 @@ func getDirectoryInfo(path string) []string {
 	}
 
 	var size int64
+	dirMap = make(map[string]int64)
 	dirInfo := make([]string, 1)
 	for _, v := range files {
 		if v.IsDir() {
@@ -199,9 +228,19 @@ func getDirectoryInfo(path string) []string {
 			}
 			size = res
 			resDirStr = v.Name()
-			dirInfo = append(dirInfo, resDirStr+" : "+ByteCountSI(size))
+			dirMap[resDirStr] = size
+			// dirInfo = append(dirInfo, resDirStr+" : "+ByteCountSI(size))
 		}
 	}
+	res := rankBySize(dirMap)
+	if sortType == "DESC" {
+		sort.Reverse(res)
+	}
+
+	for _, d := range res {
+		dirInfo = append(dirInfo, d.Key+" "+ByteCountSI(d.Value))
+	}
+
 	return dirInfo
 }
 
@@ -282,7 +321,7 @@ func main() {
 		dirWg.Add(len(s.VolumeFolders))
 		for _, f := range s.VolumeFolders {
 			go func(f string) {
-				m[filepath.FromSlash(thomePath+f)] = getDirectoryInfo(filepath.FromSlash(thomePath + f))
+				m[filepath.FromSlash(thomePath+f)] = getDirectoryInfo(filepath.FromSlash(thomePath+f), configuration.Params.SortFolders)
 				dirWg.Done()
 			}(f)
 		}
@@ -301,7 +340,7 @@ func main() {
 	vars["TimeEnd"] = endDate.Format(configuration.Params.DateFormat_time)
 	vars["Volumes"] = volumesInfo
 	vars["Folders"] = m
-	vars["c"] = endDate.Sub(startDate)
+	vars["c"] = formatExecutionTime(endDate.Sub(startDate))
 	keys := make([]string, 0, len(vars))
 	for k := range vars {
 		keys = append(keys, k)
@@ -321,4 +360,16 @@ func main() {
 	tmpl.Execute(&mailTpl, vars)
 
 	sendEmails(mailTpl.Bytes())
+}
+
+func formatExecutionTime(d time.Duration) string {
+	d = d.Round(time.Millisecond)
+	h := d / time.Hour
+	d -= h * time.Hour
+	m := d / time.Minute
+	d -= m * time.Minute
+	s := d / time.Second
+	d -= s * time.Second
+	ms := d / time.Millisecond
+	return fmt.Sprintf("%02d:%02d:%02d:%04d", h, m, s, ms)
 }
