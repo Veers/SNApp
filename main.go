@@ -194,14 +194,20 @@ func getThomeValues(path string, params Params) string {
 	return tpl.String()
 }
 
-func rankBySize(data map[string]int64) PairList {
+func rankBySize(data map[string]int64, sortType string) PairList {
 	pl := make(PairList, len(data))
 	i := 0
 	for k, v := range data {
 		pl[i] = Pair{k, v}
 		i++
 	}
-	sort.Sort(pl)
+	// bad code
+	if sortType == "ASC" {
+		sort.Sort(pl)
+	}
+	if sortType == "DESC" {
+		sort.Sort(sort.Reverse(pl))
+	}
 	return pl
 }
 
@@ -232,10 +238,7 @@ func getDirectoryInfo(path string, sortType string) []string {
 			// dirInfo = append(dirInfo, resDirStr+" : "+ByteCountSI(size))
 		}
 	}
-	res := rankBySize(dirMap)
-	if sortType == "DESC" {
-		sort.Reverse(res)
-	}
+	res := rankBySize(dirMap, sortType)
 
 	for _, d := range res {
 		dirInfo = append(dirInfo, d.Key+" "+ByteCountSI(d.Value))
@@ -359,7 +362,7 @@ func main() {
 	tmpl.Execute(file1, vars)
 	tmpl.Execute(&mailTpl, vars)
 
-	sendEmails(mailTpl.Bytes())
+	// sendEmails(mailTpl.Bytes())
 }
 
 func formatExecutionTime(d time.Duration) string {
