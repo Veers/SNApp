@@ -12,7 +12,6 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	"sync"
 	"syscall"
 	"text/template"
 	"time"
@@ -102,11 +101,20 @@ type Params struct {
 	SortFolders                 string
 }
 
+type DirInfo struct {
+	Folder string
+	Data   PairList
+}
+
 var dirMap map[string]int64
 
 type Pair struct {
 	Key   string
 	Value int64
+}
+
+func (p Pair) GetValue() string {
+	return ByteCountSI(p.Value)
 }
 
 type PairList []Pair
@@ -163,7 +171,7 @@ func DirSize(path string) (int64, error) {
 	return size, err
 }
 
-func getThomeValues(path string, params Params) string {
+func getThomeValues(n int, c chan string, config Configuration) {
 	volumeTemplateVars := make(map[string]interface{})
 
 	volumeTemplateVars["Message"] = "."
@@ -175,23 +183,29 @@ func getThomeValues(path string, params Params) string {
 	}
 	var tpl bytes.Buffer
 
-	usage := NewDiskUsage(path)
-	thomePercent := usage.Usage() * 100
-	if int(thomePercent) >= params.Percent {
-		volumeTemplateVars["Message"] = params.VolumeOutputMessage_error
-	} else {
-		volumeTemplateVars["Message"] = params.VolumeOutputMessage_success
-	}
+	for i := 0; i < n; i++ {
+		var path = filepath.FromSlash(config.Volumes[i].VolumeGOOSLetter + ":")
+		usage := NewDiskUsage(path)
+		thomePercent := usage.Usage() * 100
+		if int(thomePercent) >= config.Params.Percent {
+			volumeTemplateVars["Message"] = config.Params.VolumeOutputMessage_error
+		} else {
+			volumeTemplateVars["Message"] = config.Params.VolumeOutputMessage_success
+		}
 
-	if runtime.GOOS == "windows" {
-		volumeTemplateVars["VolumeName"] = path
-	} else {
-		volumeTemplateVars["VolumeName"] = filepath.FromSlash(strings.Split(path, "/")[2])
-	}
+		if runtime.GOOS == "windows" {
+			volumeTemplateVars["VolumeName"] = path
+		} else {
+			volumeTemplateVars["VolumeName"] = filepath.FromSlash(strings.Split(path, "/")[2])
+		}
 
-	volumeTemplateVars["CapacityPercent"] = fmt.Sprintf("%.2f %%", thomePercent)
-	tmpl.Execute(&tpl, volumeTemplateVars)
-	return tpl.String()
+		volumeTemplateVars["CapacityPercent"] = fmt.Sprintf("%.2f %%", thomePercent)
+		tmpl.Execute(&tpl, volumeTemplateVars)
+		c <- tpl.String()
+		// clear buffer for next chan
+		tpl.Truncate(0)
+	}
+	close(c)
 }
 
 func rankBySize(data map[string]int64, sortType string) PairList {
@@ -211,40 +225,55 @@ func rankBySize(data map[string]int64, sortType string) PairList {
 	return pl
 }
 
-func getDirectoryInfo(path string, sortType string) []string {
+func getDirectoryInfo(c chan []DirInfo, configuration Configuration, sortType string) {
+	var thomePath string
+	var returnedDirInfo = []DirInfo{}
+	for _, s := range configuration.Volumes {
+		thomePath = filepath.FromSlash(s.VolumeGOOSLetter + ":/")
+		for _, f := range s.VolumeFolders {
+			var dirInfo = DirInfo{}
+			dirInfo.Folder = filepath.FromSlash(filepath.FromSlash(thomePath + f))
+			path, err := os.Open(filepath.FromSlash(thomePath + f))
 
-	f, err := os.Open(path)
-	if err != nil {
-		log.Println(err)
-	}
-	files, err := f.Readdir(0)
-	if err != nil {
-		log.Println(err)
-	}
-
-	var size int64
-	dirMap = make(map[string]int64)
-	dirInfo := make([]string, 1)
-	for _, v := range files {
-		if v.IsDir() {
-			var resDirStr string
-			res, err := DirSize(filepath.FromSlash(path + "\\" + v.Name()))
 			if err != nil {
 				log.Println(err)
 			}
-			size = res
-			resDirStr = v.Name()
-			dirMap[resDirStr] = size
-			// dirInfo = append(dirInfo, resDirStr+" : "+ByteCountSI(size))
+			files, err := path.Readdir(0)
+			if err != nil {
+				log.Println(err)
+			}
+
+			var size int64
+			dirMap = make(map[string]int64)
+			// dirInfo := make([]string, 1)
+			for _, v := range files {
+				if v.IsDir() {
+					var resDirStr string
+					var fullPath = filepath.FromSlash(filepath.FromSlash(thomePath+f) + "\\" + v.Name())
+					res, err := DirSize(fullPath)
+					if err != nil {
+						log.Println(err)
+					}
+					size = res
+					resDirStr = fullPath
+					dirMap[resDirStr] = size
+					// dirInfo = append(dirInfo, resDirStr+" : "+ByteCountSI(size))
+				}
+			}
+			res := rankBySize(dirMap, sortType)
+
+			dirInfo.Data = res
+			returnedDirInfo = append(returnedDirInfo, dirInfo)
+
+			c <- returnedDirInfo
+
+			// for _, d := range res {
+			// 	// dirInfo = append(dirInfo, d.Key+" "+ByteCountSI(d.Value))
+			// 	c <- d.Key + " " + ByteCountSI(d.Value)
+			// }
 		}
 	}
-	res := rankBySize(dirMap, sortType)
-
-	for _, d := range res {
-		dirInfo = append(dirInfo, d.Key+" "+ByteCountSI(d.Value))
-	}
-
-	return dirInfo
+	close(c)
 }
 
 func sendEmails(msg []byte) {
@@ -301,48 +330,34 @@ func main() {
 	time.Sleep(2 * time.Second)
 
 	volumesInfo := make([]string, 0)
-	var thome string
-	var thomePath string
-	m := make(map[string][]string)
-	// concurrency shit
-	var wg sync.WaitGroup
-	wg.Add(len(configuration.Volumes))
-	// var volumeInfo string
-	for _, s := range configuration.Volumes {
-		if runtime.GOOS == "windows" {
-			thome = filepath.FromSlash(s.VolumeGOOSLetter + ":")
-			thomePath = filepath.FromSlash(s.VolumeGOOSLetter + ":/")
-		} else {
-			panic("ONLY WINDOWS IMPLEMENTATION")
-		}
-		go func(thome string, params Params) {
-			volumesInfo = append(volumesInfo, getThomeValues(thome, params))
-			wg.Done()
-		}(thome, configuration.Params)
+	dirsInfo := make([]DirInfo, 0)
+	c := make(chan string, len(configuration.Volumes))
+	go getThomeValues(cap(c), c, configuration)
 
-		var dirWg sync.WaitGroup
-		dirWg.Add(len(s.VolumeFolders))
-		for _, f := range s.VolumeFolders {
-			go func(f string) {
-				m[filepath.FromSlash(thomePath+f)] = getDirectoryInfo(filepath.FromSlash(thomePath+f), configuration.Params.SortFolders)
-				dirWg.Done()
-			}(f)
-		}
-		dirWg.Wait()
+	// print from channels to template
+	for i := range c {
+		volumesInfo = append(volumesInfo, i)
 	}
-	wg.Wait()
 
-	time.Sleep(2 * time.Second)
+	var dch = GetCountDirChannels(configuration.Volumes)
+	dc := make(chan []DirInfo, dch)
+	go getDirectoryInfo(dc, configuration, configuration.Params.SortFolders)
+	for i := range dc {
+		if len(i) == dch {
+			dirsInfo = i
+		}
+	}
 
 	endDate := time.Now()
 
+	// generate report
 	vars := make(map[string]interface{})
 	vars["Time"] = startDate.Format(configuration.Params.DateFormat_time)
 	vars["Date"] = startDate.Format(configuration.Params.DateFormat_date)
 	vars["DateEnd"] = endDate.Format(configuration.Params.DateFormat_date)
 	vars["TimeEnd"] = endDate.Format(configuration.Params.DateFormat_time)
 	vars["Volumes"] = volumesInfo
-	vars["Folders"] = m
+	vars["Folders"] = dirsInfo
 	vars["c"] = formatExecutionTime(endDate.Sub(startDate))
 	keys := make([]string, 0, len(vars))
 	for k := range vars {
@@ -362,7 +377,8 @@ func main() {
 	tmpl.Execute(file1, vars)
 	tmpl.Execute(&mailTpl, vars)
 
-	// sendEmails(mailTpl.Bytes())
+	// send emails
+	sendEmails(mailTpl.Bytes())
 }
 
 func formatExecutionTime(d time.Duration) string {
@@ -375,4 +391,13 @@ func formatExecutionTime(d time.Duration) string {
 	d -= s * time.Second
 	ms := d / time.Millisecond
 	return fmt.Sprintf("%02d:%02d:%02d:%04d", h, m, s, ms)
+}
+
+func GetCountDirChannels(volumes []DataVolume) int {
+	var cnt = 0
+	for _, item := range volumes {
+		cnt += len(item.VolumeFolders)
+	}
+	return cnt
+
 }
