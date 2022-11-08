@@ -7,9 +7,9 @@
     По проектам:
 ------------------------------------------------
 {{range $name_folder, $val_folder := .Folders}}
-    В папке {{ $name_folder }}:
-    {{range $val_f := $val_folder}}
-        {{ $val_f }}
+    В папке {{ $val_folder.Folder }}:
+    {{range $val_f := $val_folder.Data}}
+        {{ $val_f.Key }} {{$val_f.GetValue}}
     {{end}}
 {{end}}
 ------------------------------------------------

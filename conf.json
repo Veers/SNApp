@@ -6,7 +6,7 @@
         "VolumeOutputMessage_success": "✅ в порядке",
         "VolumeOutputMessage_error": "⚠️  ВНИМАНИЕ",
         "ThreadsPerVolumes": 5,
-        "SortFolders": "DESC"
+        "SortFolders": "ASC"
     },
     "Volumes": [
         {
@@ -22,7 +22,8 @@
             "VolumeUNIXPath": "/Volumes/TestFolder2",
             "VolumeFolders": [
                 "Dev/python3",
-                "Projects/Java"
+                "Projects/Java",
+                "Projects/VM/linux"
             ]
         }
     ],
