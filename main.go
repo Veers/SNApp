@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"math"
 	"net/smtp"
 	"os"
 	"path/filepath"
@@ -12,51 +13,28 @@ import (
 	"strconv"
 	"text/template"
 	"time"
+
+	"golang.org/x/sys/unix"
 )
+
+var stat unix.Statfs_t
 
 // NewDiskUsages returns an object holding the disk usage of volumePath
 // or nil in case of error (invalid path, etc)
-func getDiskUsage(volumePath string) (int64, error) {
+func getDiskUsage(volumePath string) (float64, error) {
+	wd, err := os.Getwd()
+	if err != nil {
+		return -1.0, err
+	}
+	unix.Statfs(wd, &stat)
 
-	var size int64
-	err := filepath.Walk(volumePath, func(_ string, info os.FileInfo, err error) error {
-		if err != nil {
-			return err
-		}
-		if !info.IsDir() {
-			size += info.Size()
-		}
-		return err
-	})
-	return size, err
-}
-
-func ByteCountSI(b int64) string {
-	const unit = 1000
-	if b < unit {
-		return fmt.Sprintf("%d B", b)
-	}
-	div, exp := int64(unit), 0
-	for n := b / unit; n >= unit; n /= unit {
-		div *= unit
-		exp++
-	}
-	return fmt.Sprintf("%.1f %cB",
-		float64(b)/float64(div), "kMGTPE"[exp])
-}
-
-func ByteCountIEC(b int64) string {
-	const unit = 1024
-	if b < unit {
-		return fmt.Sprintf("%d B", b)
-	}
-	div, exp := int64(unit), 0
-	for n := b / unit; n >= unit; n /= unit {
-		div *= unit
-		exp++
-	}
-	return fmt.Sprintf("%.1f %ciB",
-		float64(b)/float64(div), "KMGTPE"[exp])
+	// Available blocks * size per block = available space in bytes
+	var fullSize = stat.Blocks * uint64(stat.Bsize)
+	var freeSize = stat.Bavail * uint64(stat.Bsize)
+	var percent = (float64(fullSize-freeSize) / float64(fullSize)) * 100
+	ratio := math.Pow(10, float64(2))
+	var roundPercent = math.Round(percent*ratio) / ratio
+	return roundPercent, nil
 }
 
 func DirSize(path string) (int64, error) {
@@ -92,16 +70,14 @@ func getThomeValues(n int, c chan string, config Configuration) {
 		if err != nil {
 			volumeTemplateVars["Message"] = "FATAL ERROR!"
 		}
-		// TODO
-		var thomePercent = 50
-		if int(thomePercent) >= config.Params.Percent {
+		if int(usage) >= config.Params.Percent {
 			volumeTemplateVars["Message"] = config.Params.VolumeOutputMessage_error
 		} else {
 			volumeTemplateVars["Message"] = config.Params.VolumeOutputMessage_success
 		}
 
 		volumeTemplateVars["VolumeName"] = path
-		volumeTemplateVars["CapacityPercent"] = ByteCountSI(usage)
+		volumeTemplateVars["CapacityPercent"] = fmt.Sprintf("%.2f%%", usage)
 		tmpl.Execute(&tpl, volumeTemplateVars)
 		c <- tpl.String()
 		// clear buffer for next chan
@@ -249,11 +225,9 @@ func main() {
 	getDirectoryInfo(dc, configuration, configuration.Params.SortFolders)
 	rres := <-dc
 
-	for i := range rres {
-		fmt.Println(rres[i])
+	if len(rres) > 0 {
 		dirsInfo = rres
 	}
-
 	endDate := time.Now()
 
 	// generate report
