@@ -10,20 +10,10 @@
     },
     "Volumes": [
         {
-            "VolumeGOOSLetter": "C",
-            "VolumeUNIXPath": "/Volumes/TestFolder",
+            "VolumePath": "/Volumes/TestFolder",
             "VolumeFolders": [
                 "Games/Heroes3_HotA",
                 "Python27"
-            ]
-        },
-        {
-            "VolumeGOOSLetter": "D",
-            "VolumeUNIXPath": "/Volumes/TestFolder2",
-            "VolumeFolders": [
-                "Dev/python3",
-                "Projects/Java",
-                "Projects/VM/linux"
             ]
         }
     ],

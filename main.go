@@ -8,125 +8,27 @@ import (
 	"net/smtp"
 	"os"
 	"path/filepath"
-	"runtime"
 	"sort"
 	"strconv"
-	"strings"
-	"syscall"
 	"text/template"
 	"time"
-	"unsafe"
 )
-
-type DiskUsage struct {
-	freeBytes  int64
-	totalBytes int64
-	availBytes int64
-}
 
 // NewDiskUsages returns an object holding the disk usage of volumePath
 // or nil in case of error (invalid path, etc)
-func NewDiskUsage(volumePath string) *DiskUsage {
+func getDiskUsage(volumePath string) (int64, error) {
 
-	h := syscall.MustLoadDLL("kernel32.dll")
-	c := h.MustFindProc("GetDiskFreeSpaceExW")
-
-	du := &DiskUsage{}
-
-	c.Call(
-		uintptr(unsafe.Pointer(syscall.StringToUTF16Ptr(volumePath))),
-		uintptr(unsafe.Pointer(&du.freeBytes)),
-		uintptr(unsafe.Pointer(&du.totalBytes)),
-		uintptr(unsafe.Pointer(&du.availBytes)))
-
-	return du
-}
-
-// Free returns total free bytes on file system
-func (du *DiskUsage) Free() uint64 {
-	return uint64(du.freeBytes)
-}
-
-// Available returns total available bytes on file system to an unprivileged user
-func (du *DiskUsage) Available() uint64 {
-	return uint64(du.availBytes)
-}
-
-// Size returns total size of the file system
-func (du *DiskUsage) Size() uint64 {
-	return uint64(du.totalBytes)
-}
-
-// Used returns total bytes used in file system
-func (du *DiskUsage) Used() uint64 {
-	return du.Size() - du.Free()
-}
-
-// Usage returns percentage of use on the file system
-func (du *DiskUsage) Usage() float32 {
-	return float32(du.Used()) / float32(du.Size())
-}
-
-var KB = uint64(1024)
-
-type SMTPConfiguration struct {
-	server   string
-	port     int
-	from     string
-	login    string
-	password string
-	reply    string
-	to       []string
-}
-
-type DataVolume struct {
-	VolumeGOOSLetter string
-	VolumeUNIXPath   string
-	VolumeFolders    []string
-}
-
-type Configuration struct {
-	Volumes  []DataVolume
-	MailList []string
-	Params   Params
-}
-
-type Params struct {
-	Percent                     int
-	DateFormat_date             string
-	DateFormat_time             string
-	VolumeOutputMessage_success string
-	VolumeOutputMessage_error   string
-	ThreadsPerVolumes           int
-	SortFolders                 string
-}
-
-type DirInfo struct {
-	Folder string
-	Data   PairList
-}
-
-var dirMap map[string]int64
-
-type Pair struct {
-	Key   string
-	Value int64
-}
-
-func (p Pair) GetValue() string {
-	return ByteCountSI(p.Value)
-}
-
-type PairList []Pair
-
-func (p PairList) Len() int           { return len(p) }
-func (p PairList) Less(i, j int) bool { return p[i].Value < p[j].Value }
-func (p PairList) Swap(i, j int)      { p[i], p[j] = p[j], p[i] }
-
-func check(e error) {
-	if e != nil {
-		panic(e)
-	}
+	var size int64
+	err := filepath.Walk(volumePath, func(_ string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		if !info.IsDir() {
+			size += info.Size()
+		}
+		return err
+	})
+	return size, err
 }
 
 func ByteCountSI(b int64) string {
@@ -183,23 +85,23 @@ func getThomeValues(n int, c chan string, config Configuration) {
 	}
 	var tpl bytes.Buffer
 
+	// loop over thomes
 	for i := 0; i < n; i++ {
-		var path = filepath.FromSlash(config.Volumes[i].VolumeGOOSLetter + ":")
-		usage := NewDiskUsage(path)
-		thomePercent := usage.Usage() * 100
+		var path = filepath.FromSlash(config.Volumes[i].VolumePath)
+		usage, err := getDiskUsage(path)
+		if err != nil {
+			volumeTemplateVars["Message"] = "FATAL ERROR!"
+		}
+		// TODO
+		var thomePercent = 50
 		if int(thomePercent) >= config.Params.Percent {
 			volumeTemplateVars["Message"] = config.Params.VolumeOutputMessage_error
 		} else {
 			volumeTemplateVars["Message"] = config.Params.VolumeOutputMessage_success
 		}
 
-		if runtime.GOOS == "windows" {
-			volumeTemplateVars["VolumeName"] = path
-		} else {
-			volumeTemplateVars["VolumeName"] = filepath.FromSlash(strings.Split(path, "/")[2])
-		}
-
-		volumeTemplateVars["CapacityPercent"] = fmt.Sprintf("%.2f %%", thomePercent)
+		volumeTemplateVars["VolumeName"] = path
+		volumeTemplateVars["CapacityPercent"] = ByteCountSI(usage)
 		tmpl.Execute(&tpl, volumeTemplateVars)
 		c <- tpl.String()
 		// clear buffer for next chan
@@ -227,53 +129,53 @@ func rankBySize(data map[string]int64, sortType string) PairList {
 
 func getDirectoryInfo(c chan []DirInfo, configuration Configuration, sortType string) {
 	var thomePath string
-	var returnedDirInfo = []DirInfo{}
+	returnedDirInfo := make([]DirInfo, 0)
+	// loop over thomes
 	for _, s := range configuration.Volumes {
-		thomePath = filepath.FromSlash(s.VolumeGOOSLetter + ":/")
+		thomePath = filepath.FromSlash(s.VolumePath + "/")
+		// make return struct for each thome instance
+		di := NewDirInfo(thomePath)
+		di.Data = PairList{}
 		for _, f := range s.VolumeFolders {
-			var dirInfo = DirInfo{}
-			dirInfo.Folder = filepath.FromSlash(filepath.FromSlash(thomePath + f))
-			path, err := os.Open(filepath.FromSlash(thomePath + f))
-
+			// append to info each folder with it size
+			var fullPath = fmt.Sprintf("%s%s", thomePath, f)
+			dds, err := IDirSize(fullPath)
 			if err != nil {
-				log.Println(err)
+				log.Printf("Error while directory size counting: %s", err)
+				continue
 			}
-			files, err := path.Readdir(0)
+			di.Data = append(di.Data, Pair{fullPath, dds})
+		}
+		returnedDirInfo = append(returnedDirInfo, di)
+	}
+	c <- returnedDirInfo
+	close(c)
+}
+
+func IDirSize(path string) (int64, error) {
+	var size int64
+	entries, err := os.ReadDir(path)
+	if err != nil {
+		return size, err
+	}
+	for _, entry := range entries {
+		if entry.IsDir() {
+			subDirSize, err := DirSize(path + "/" + entry.Name())
 			if err != nil {
-				log.Println(err)
+				fmt.Printf("failed to calculate size of directory %s: %v\n", entry.Name(), err)
+				continue
 			}
-
-			var size int64
-			dirMap = make(map[string]int64)
-			// dirInfo := make([]string, 1)
-			for _, v := range files {
-				if v.IsDir() {
-					var resDirStr string
-					var fullPath = filepath.FromSlash(filepath.FromSlash(thomePath+f) + "\\" + v.Name())
-					res, err := DirSize(fullPath)
-					if err != nil {
-						log.Println(err)
-					}
-					size = res
-					resDirStr = fullPath
-					dirMap[resDirStr] = size
-					// dirInfo = append(dirInfo, resDirStr+" : "+ByteCountSI(size))
-				}
+			size += subDirSize
+		} else {
+			fileInfo, err := entry.Info()
+			if err != nil {
+				fmt.Printf("failed to get info of file %s: %v\n", entry.Name(), err)
+				continue
 			}
-			res := rankBySize(dirMap, sortType)
-
-			dirInfo.Data = res
-			returnedDirInfo = append(returnedDirInfo, dirInfo)
-
-			c <- returnedDirInfo
-
-			// for _, d := range res {
-			// 	// dirInfo = append(dirInfo, d.Key+" "+ByteCountSI(d.Value))
-			// 	c <- d.Key + " " + ByteCountSI(d.Value)
-			// }
+			size += fileInfo.Size()
 		}
 	}
-	close(c)
+	return size, nil
 }
 
 func sendEmails(msg []byte) {
@@ -312,6 +214,7 @@ func main() {
 	if logErr != nil {
 		log.Fatal(logErr)
 	}
+
 	log.SetOutput(logFile)
 
 	startDate := time.Now()
@@ -329,6 +232,7 @@ func main() {
 
 	time.Sleep(2 * time.Second)
 
+	// get info about root paths (thomes)
 	volumesInfo := make([]string, 0)
 	dirsInfo := make([]DirInfo, 0)
 	c := make(chan string, len(configuration.Volumes))
@@ -339,13 +243,15 @@ func main() {
 		volumesInfo = append(volumesInfo, i)
 	}
 
+	// get subdirs info
 	var dch = GetCountDirChannels(configuration.Volumes)
 	dc := make(chan []DirInfo, dch)
-	go getDirectoryInfo(dc, configuration, configuration.Params.SortFolders)
-	for i := range dc {
-		if len(i) == dch {
-			dirsInfo = i
-		}
+	getDirectoryInfo(dc, configuration, configuration.Params.SortFolders)
+	rres := <-dc
+
+	for i := range rres {
+		fmt.Println(rres[i])
+		dirsInfo = rres
 	}
 
 	endDate := time.Now()
@@ -359,10 +265,6 @@ func main() {
 	vars["Volumes"] = volumesInfo
 	vars["Folders"] = dirsInfo
 	vars["c"] = formatExecutionTime(endDate.Sub(startDate))
-	keys := make([]string, 0, len(vars))
-	for k := range vars {
-		keys = append(keys, k)
-	}
 	// parse the template
 	tmpl, err := template.ParseFiles("templates/template.tmpl")
 	if err != nil {
@@ -399,5 +301,4 @@ func GetCountDirChannels(volumes []DataVolume) int {
 		cnt += len(item.VolumeFolders)
 	}
 	return cnt
-
 }
