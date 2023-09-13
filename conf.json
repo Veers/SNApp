@@ -1,6 +1,6 @@
 {
     "Params": {
-        "Percent": 50,
+        "Percent": 80,
         "DateFormat_date": "02-01-2006",
         "DateFormat_time": "15:04:05",
         "VolumeOutputMessage_success": "✅ в порядке",
@@ -10,11 +10,22 @@
     },
     "Volumes": [
         {
-            "VolumePath": "/Volumes/TestFolder",
+            "VolumePath": "/root",
             "VolumeFolders": [
-                "Games/Heroes3_HotA",
-                "Python27"
+                "bienv"
             ]
+        },
+        {
+            "VolumePath": "/var/www",
+            "VolumeFolders": [
+                "html",
+                "gnuchain.ru",
+                "NO_DIR_TEST"
+            ]
+        },
+        {
+            "VolumePath": "/dev/vda2",
+            "VolumeFolders": []
         }
     ],
     "MailList": [

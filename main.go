@@ -22,6 +22,7 @@ var stat unix.Statfs_t
 // NewDiskUsages returns an object holding the disk usage of volumePath
 // or nil in case of error (invalid path, etc)
 func getDiskUsage(volumePath string) (float64, error) {
+
 	wd, err := os.Getwd()
 	if err != nil {
 		return -1.0, err
@@ -30,7 +31,7 @@ func getDiskUsage(volumePath string) (float64, error) {
 
 	// Available blocks * size per block = available space in bytes
 	var fullSize = stat.Blocks * uint64(stat.Bsize)
-	var freeSize = stat.Bavail * uint64(stat.Bsize)
+	var freeSize = stat.Bfree * uint64(stat.Bsize)
 	var percent = (float64(fullSize-freeSize) / float64(fullSize)) * 100
 	ratio := math.Pow(10, float64(2))
 	var roundPercent = math.Round(percent*ratio) / ratio
@@ -222,7 +223,7 @@ func main() {
 	// get subdirs info
 	var dch = GetCountDirChannels(configuration.Volumes)
 	dc := make(chan []DirInfo, dch)
-	getDirectoryInfo(dc, configuration, configuration.Params.SortFolders)
+	go getDirectoryInfo(dc, configuration, configuration.Params.SortFolders)
 	rres := <-dc
 
 	if len(rres) > 0 {
