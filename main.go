@@ -8,9 +8,12 @@ import (
 	"math"
 	"net/smtp"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strconv"
+	"strings"
 	"text/template"
 	"time"
 
@@ -22,7 +25,6 @@ var stat unix.Statfs_t
 // NewDiskUsages returns an object holding the disk usage of volumePath
 // or nil in case of error (invalid path, etc)
 func getDiskUsage(volumePath string) (float64, error) {
-
 	wd, err := os.Getwd()
 	if err != nil {
 		return -1.0, err
@@ -64,10 +66,37 @@ func getThomeValues(n int, c chan string, config Configuration) {
 	}
 	var tpl bytes.Buffer
 
+	app := "df"
+	arg0 := "-PhT"
+	// arg1 := "acfs"
+
+	cmd := exec.Command(app, arg0)
+	stdout, errr := cmd.Output()
+
+	if errr != nil {
+		fmt.Println(errr.Error())
+	}
+
+	var sout = string(stdout)
+	soutarr := strings.Split(sout, "\n")
+
 	// loop over thomes
+	var usage float64
+	var err error
 	for i := 0; i < n; i++ {
 		var path = filepath.FromSlash(config.Volumes[i].VolumePath)
-		usage, err := getDiskUsage(path)
+		var dflag = false
+		for i := range soutarr {
+			if strings.Contains(soutarr[i], path) {
+				dflag = true
+			}
+		}
+		if dflag {
+			usage = ExtractPercentrageFromDFStr(soutarr[i])
+		} else {
+			usage, err = getDiskUsage(path)
+		}
+
 		if err != nil {
 			volumeTemplateVars["Message"] = "FATAL ERROR!"
 		}
@@ -85,6 +114,31 @@ func getThomeValues(n int, c chan string, config Configuration) {
 		tpl.Truncate(0)
 	}
 	close(c)
+}
+
+func ExtractPercentrageFromDFStr(s string) float64 {
+
+	// Define a regular expression pattern to match the percentage (digits followed by '%')
+	percentPattern := `(\d+)\%`
+
+	// Compile the regular expression
+	regex := regexp.MustCompile(percentPattern)
+
+	// Find the first match of the percentage in the input string
+	match := regex.FindStringSubmatch(s)
+
+	if len(match) >= 2 {
+		// Extract the percentage value from the match
+		percentage := match[1]
+		percentageFloat, err := strconv.ParseFloat(percentage, 64)
+		if err != nil {
+			fmt.Println("Error converting string to float:", err)
+		}
+		return percentageFloat
+	} else {
+		fmt.Println("Percentage not found in the input string.")
+		return -1.0
+	}
 }
 
 func rankBySize(data map[string]int64, sortType string) PairList {
