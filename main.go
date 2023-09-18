@@ -67,7 +67,8 @@ func getThomeValues(n int, c chan string, config Configuration) {
 	var tpl bytes.Buffer
 
 	app := "df"
-	arg0 := "-PhT"
+	arg0 := "-Ph"
+	// arg0 := "-PhT" // use T only with fs type third flag
 	// arg1 := "acfs"
 
 	cmd := exec.Command(app, arg0)
