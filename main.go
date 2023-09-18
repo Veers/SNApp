@@ -86,13 +86,15 @@ func getThomeValues(n int, c chan string, config Configuration) {
 	for i := 0; i < n; i++ {
 		var path = filepath.FromSlash(config.Volumes[i].VolumePath)
 		var dflag = false
+		var index_pos = -1
 		for i := range soutarr {
 			if strings.Contains(soutarr[i], path) {
 				dflag = true
+				index_pos = i
 			}
 		}
-		if dflag {
-			usage = ExtractPercentrageFromDFStr(soutarr[i])
+		if dflag && index_pos != -1 {
+			usage = ExtractPercentrageFromDFStr(soutarr[index_pos])
 		} else {
 			usage, err = getDiskUsage(path)
 		}
@@ -245,11 +247,9 @@ func main() {
 	if logErr != nil {
 		log.Fatal(logErr)
 	}
-
 	log.SetOutput(logFile)
-
+	// set start time
 	startDate := time.Now()
-
 	// read config start
 	file, _ := os.Open("conf.json")
 	defer file.Close()
@@ -259,7 +259,7 @@ func main() {
 	if err != nil {
 		log.Println("error:", err)
 	}
-	// read config start
+	// read config end
 
 	time.Sleep(2 * time.Second)
 
