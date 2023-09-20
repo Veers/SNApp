@@ -78,11 +78,11 @@ var dirMap map[string]int64
 
 type Pair struct {
 	Key   string
-	Value int64
+	Value string
 }
 
 func (p Pair) GetValue() string {
-	return ByteCountSI(p.Value)
+	return p.Value
 }
 
 type PairList []Pair

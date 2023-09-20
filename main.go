@@ -144,7 +144,7 @@ func ExtractPercentrageFromDFStr(s string) float64 {
 	}
 }
 
-func rankBySize(data map[string]int64, sortType string) PairList {
+func rankBySize(data map[string]string, sortType string) PairList {
 	pl := make(PairList, len(data))
 	i := 0
 	for k, v := range data {
@@ -186,30 +186,18 @@ func getDirectoryInfo(c chan []DirInfo, configuration Configuration, sortType st
 	close(c)
 }
 
-func IDirSize(path string) (int64, error) {
-	var size int64
-	entries, err := os.ReadDir(path)
-	if err != nil {
-		return size, err
+func IDirSize(path string) (string, error) {
+	app := "du"
+	arg0 := "-sh"
+
+	cmd := exec.Command(app, arg0, path)
+	stdout, errr := cmd.Output()
+
+	if errr != nil {
+		fmt.Println(errr.Error())
 	}
-	for _, entry := range entries {
-		if entry.IsDir() {
-			subDirSize, err := DirSize(path + "/" + entry.Name())
-			if err != nil {
-				fmt.Printf("failed to calculate size of directory %s: %v\n", entry.Name(), err)
-				continue
-			}
-			size += subDirSize
-		} else {
-			fileInfo, err := entry.Info()
-			if err != nil {
-				fmt.Printf("failed to get info of file %s: %v\n", entry.Name(), err)
-				continue
-			}
-			size += fileInfo.Size()
-		}
-	}
-	return size, nil
+	var sout = string(stdout)
+	return strings.Split(sout, "\t")[0], nil
 }
 
 func sendEmails(msg []byte) {
