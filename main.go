@@ -189,9 +189,8 @@ func getDirectoryInfo(c chan []DirInfo, configuration Configuration, sortType st
 func IDirSize(path string) (string, error) {
 	app := "du"
 	arg0 := "-sh"
-	arg1 := "--exclude"
 
-	cmd := exec.Command(app, arg0, arg1, path)
+	cmd := exec.Command(app, arg0, path)
 	stdout, errr := cmd.Output()
 
 	if errr != nil {
